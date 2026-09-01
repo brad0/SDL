@@ -38,7 +38,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#if defined(SDL_PLATFORM_FREEBSD) || defined(SDL_PLATFORM_OPENBSD)
+#if defined(SDL_PLATFORM_FREEBSD)
 #include <sys/sysctl.h>
 #endif
 
@@ -71,57 +71,6 @@ static char *readSymLink(const char *path)
     return NULL;
 }
 
-#ifdef SDL_PLATFORM_OPENBSD
-static char *search_path_for_binary(const char *bin)
-{
-    const char *envr_real = SDL_getenv("PATH");
-    char *envr;
-    size_t alloc_size;
-    char *exe = NULL;
-    char *start;
-    char *ptr;
-
-    if (!envr_real) {
-        SDL_SetError("No $PATH set");
-        return NULL;
-    }
-
-    start = envr = SDL_strdup(envr_real);
-    if (!envr) {
-        return NULL;
-    }
-
-    SDL_assert(bin != NULL);
-
-    alloc_size = SDL_strlen(bin) + SDL_strlen(envr) + 2;
-    exe = (char *)SDL_malloc(alloc_size);
-
-    do {
-        ptr = SDL_strchr(start, ':'); // find next $PATH separator.
-        if (ptr != start) {
-            if (ptr) {
-                *ptr = '\0';
-            }
-
-            // build full binary path...
-            SDL_snprintf(exe, alloc_size, "%s%s%s", start, (ptr && (ptr[-1] == '/')) ? "" : "/", bin);
-
-            if (access(exe, X_OK) == 0) { // Exists as executable? We're done.
-                SDL_free(envr);
-                return exe;
-            }
-        }
-        start = ptr + 1; // start points to beginning of next element.
-    } while (ptr);
-
-    SDL_free(envr);
-    SDL_free(exe);
-
-    SDL_SetError("Process not found in $PATH");
-    return NULL; // doesn't exist in path.
-}
-#endif
-
 static char *GetExePath(void)
 {
     char *result = NULL;
@@ -138,60 +87,12 @@ static char *GetExePath(void)
     }
 #endif
 #ifdef SDL_PLATFORM_OPENBSD
-    // Please note that this will fail if the process was launched with a relative path and $PWD + the cwd have changed, or argv is altered. So don't do that. Or add a new sysctl to OpenBSD.
-    char **cmdline;
-    size_t len;
-    const int mib[] = { CTL_KERN, KERN_PROC_ARGS, getpid(), KERN_PROC_ARGV };
-    if (sysctl(mib, 4, NULL, &len, NULL, 0) != -1) {
-        char *exe, *pwddst;
-        char *realpathbuf = (char *)SDL_malloc(PATH_MAX + 1);
-        if (!realpathbuf) {
-            return NULL;
-        }
-
-        cmdline = SDL_malloc(len);
-        if (!cmdline) {
-            SDL_free(realpathbuf);
-            return NULL;
-        }
-
-        sysctl(mib, 4, cmdline, &len, NULL, 0);
-
-        exe = cmdline[0];
-        pwddst = NULL;
-        if (SDL_strchr(exe, '/') == NULL) { // not a relative or absolute path, check $PATH for it
-            exe = search_path_for_binary(cmdline[0]);
-        } else {
-            if (exe && *exe == '.') {
-                const char *pwd = SDL_getenv("PWD");
-                if (pwd && *pwd) {
-                    SDL_asprintf(&pwddst, "%s/%s", pwd, exe);
-                }
-            }
-        }
-
-        if (exe) {
-            if (!pwddst) {
-                if (realpath(exe, realpathbuf) != NULL) {
-                    result = realpathbuf;
-                }
-            } else {
-                if (realpath(pwddst, realpathbuf) != NULL) {
-                    result = realpathbuf;
-                }
-                SDL_free(pwddst);
-            }
-
-            if (exe != cmdline[0]) {
-                SDL_free(exe);
-            }
-        }
-
+    char fullpath[PATH_MAX];
+    if (getexecpath(fullpath, sizeof(fullpath)) == 0) {
+        result = SDL_strdup(fullpath);
         if (!result) {
-            SDL_free(realpathbuf);
+            return NULL;
         }
-
-        SDL_free(cmdline);
     }
 #endif
 
